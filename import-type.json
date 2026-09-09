@@ -1,0 +1,174 @@
+{
+  "id": "",
+  "name": "DWD Solar",
+  "description": "Ten minute solar observations (global and diffuse irradiance, sunshine duration, downward longwave radiation) of configured DWD weather stations, optionally with the air temperature of the same stations. Uses publicly available data provided by Deutscher Wetterdienst.",
+  "image": "ghcr.io/senergy-platform/import-dwd-solar:prod",
+  "default_restart": true,
+  "owner": "",
+  "cost": 0,
+  "configs": [
+    {
+      "name": "STATION_IDS",
+      "description": "DWD station ids to import, zero padded as in the DWD solar station list, for example [\"02932\"]. At least one id is required.",
+      "type": "https://schema.org/ItemList",
+      "default_value": []
+    },
+    {
+      "name": "HISTORIC",
+      "description": "Import all available historic data once at startup.",
+      "type": "https://schema.org/Boolean",
+      "default_value": false
+    },
+    {
+      "name": "RECENT",
+      "description": "Import the recent archive, roughly the last 500 days, once at startup.",
+      "type": "https://schema.org/Boolean",
+      "default_value": false
+    },
+    {
+      "name": "WITH_TEMPERATURE",
+      "description": "Join the air temperature in 2 m height of the same stations onto the solar observations.",
+      "type": "https://schema.org/Boolean",
+      "default_value": true
+    }
+  ],
+  "output": {
+    "name": "root",
+    "type": "https://schema.org/StructuredValue",
+    "sub_content_variables": [
+      {
+        "name": "import_id",
+        "type": "https://schema.org/Text",
+        "use_as_tag": true,
+        "sub_content_variables": []
+      },
+      {
+        "name": "time",
+        "type": "https://schema.org/Text",
+        "characteristic_id": "urn:infai:ses:characteristic:6bc41b45-a9f3-4d87-9c51-dd3e11257800",
+        "sub_content_variables": []
+      },
+      {
+        "name": "value",
+        "type": "https://schema.org/StructuredValue",
+        "sub_content_variables": [
+          {
+            "name": "global_irradiance_wm2",
+            "type": "https://schema.org/Float",
+            "function_id": "urn:infai:ses:measuring-function:5f0951e8-ed8c-4494-b534-6e5382fd92d8",
+            "aspect_ids": ["<aspect: Weather Station>"],
+            "sub_content_variables": []
+          },
+          {
+            "name": "diffuse_irradiance_wm2",
+            "type": "https://schema.org/Float",
+            "function_id": "urn:infai:ses:measuring-function:5f0951e8-ed8c-4494-b534-6e5382fd92d8",
+            "aspect_ids": ["<aspect: Weather Station>"],
+            "sub_content_variables": []
+          },
+          {
+            "name": "sunshine_seconds",
+            "type": "https://schema.org/Float",
+            "function_id": "<function: Get Sunshine Duration>",
+            "aspect_ids": ["<aspect: Weather Station>"],
+            "sub_content_variables": []
+          },
+          {
+            "name": "longwave_wm2",
+            "type": "https://schema.org/Float",
+            "function_id": "<function: Get Longwave Radiation>",
+            "aspect_ids": ["<aspect: Weather Station>"],
+            "sub_content_variables": []
+          },
+          {
+            "name": "global_irradiance_raw",
+            "type": "https://schema.org/Float",
+            "function_id": "urn:infai:ses:measuring-function:5f0951e8-ed8c-4494-b534-6e5382fd92d8",
+            "aspect_ids": ["<aspect: Weather Station>"],
+            "sub_content_variables": []
+          },
+          {
+            "name": "temperature_2m",
+            "type": "https://schema.org/Float",
+            "function_id": "<function: Get Temperature>",
+            "aspect_ids": ["<aspect: Weather Station>"],
+            "sub_content_variables": []
+          },
+          {
+            "name": "meta",
+            "type": "https://schema.org/StructuredValue",
+            "sub_content_variables": [
+              {
+                "name": "quality_level",
+                "type": "https://schema.org/Integer",
+                "sub_content_variables": []
+              },
+              {
+                "name": "name",
+                "type": "https://schema.org/Text",
+                "sub_content_variables": []
+              },
+              {
+                "name": "id",
+                "type": "https://schema.org/Text",
+                "use_as_tag": true,
+                "sub_content_variables": []
+              },
+              {
+                "name": "lat",
+                "type": "https://schema.org/Float",
+                "sub_content_variables": []
+              },
+              {
+                "name": "long",
+                "type": "https://schema.org/Float",
+                "sub_content_variables": []
+              },
+              {
+                "name": "height",
+                "type": "https://schema.org/Float",
+                "sub_content_variables": []
+              },
+              {
+                "name": "units",
+                "type": "https://schema.org/StructuredValue",
+                "sub_content_variables": [
+                  {
+                    "name": "global_irradiance_wm2",
+                    "type": "https://schema.org/Text",
+                    "sub_content_variables": []
+                  },
+                  {
+                    "name": "diffuse_irradiance_wm2",
+                    "type": "https://schema.org/Text",
+                    "sub_content_variables": []
+                  },
+                  {
+                    "name": "sunshine_seconds",
+                    "type": "https://schema.org/Text",
+                    "sub_content_variables": []
+                  },
+                  {
+                    "name": "longwave_wm2",
+                    "type": "https://schema.org/Text",
+                    "sub_content_variables": []
+                  },
+                  {
+                    "name": "global_irradiance_raw",
+                    "type": "https://schema.org/Text",
+                    "sub_content_variables": []
+                  },
+                  {
+                    "name": "temperature_2m",
+                    "type": "https://schema.org/Text",
+                    "sub_content_variables": []
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
