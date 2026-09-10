@@ -14,7 +14,9 @@
 
 import datetime
 import logging
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Collection, Dict, List, Optional, Tuple
+
+from import_lib.import_lib import get_logger
 
 from lib.dwd.archive import NOW, RECENT, SOLAR, TEMPERATURE, blocks_overlapping, fetch_historical_block, \
     fetch_historical_blocks, fetch_product, get_bytes
@@ -22,7 +24,7 @@ from lib.dwd.messages import build_message
 from lib.dwd.rows import SolarRow, TemperatureRow, join_temperature, parse_solar, parse_temperature
 from lib.dwd.stations import Station
 
-logger = logging.getLogger(__name__)
+_logger = None
 
 # A cursor this old is not inside the reach of the recent archive any more, so the historical blocks are needed
 # to close the gap.
@@ -30,6 +32,18 @@ RECENT_REACH = datetime.timedelta(days=500)
 
 # A cursor this old is beyond what a single now archive, which holds the current day, could carry.
 NOW_REACH = datetime.timedelta(hours=24)
+
+# An instant DWD's air temperature archives have not caught up with within this span goes out without the
+# temperature, so a hole in one product costs latency and a single field instead of stalling the series for good.
+MAX_HOLD = datetime.timedelta(hours=2)
+
+
+def log() -> logging.Logger:
+    # Built on first use: import-lib's logger only carries its static fields after ImportLib() ran init_logging.
+    global _logger
+    if _logger is None:
+        _logger = get_logger(__name__)
+    return _logger
 
 
 def as_utc(value: Optional[datetime.datetime]) -> Optional[datetime.datetime]:
@@ -59,6 +73,33 @@ def start_of_day(instant: datetime.datetime) -> datetime.datetime:
     return instant.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
+def covered_until(instants: Collection[datetime.datetime],
+                  recent_instants: Optional[Collection[datetime.datetime]]) -> Optional[datetime.datetime]:
+    '''
+    The newest instant of one product a run may rely on
+
+    The now archive holds the current day and the recent archive whole closed days, so once the now archive has
+    rolled over to a day the recent archive does not reach into, everything above the recent archive sits behind
+    a gap that only the next regeneration of the recent archive fills.
+
+    :param instants: every instant the run parsed for the product, the recent ones included
+    :param recent_instants: the instants the recent archive contributed, or None if the run did not read it
+    :return: the instant, or None if the run may rely on nothing
+    '''
+    if not instants:
+        return None
+    if recent_instants is None:
+        return max(instants)
+    if not recent_instants:
+        return None
+    newest_recent = max(recent_instants)
+    above = [instant for instant in instants if instant > newest_recent]
+    # Whole days, not single steps: a legitimately absent last row of the recent archive is not a gap.
+    if above and start_of_day(min(above)) > start_of_day(newest_recent) + datetime.timedelta(days=1):
+        return newest_recent
+    return max(instants)
+
+
 class SolarImport:
     '''
     Publishes the ten minute solar observations of a set of stations, each station tracked by its own cursor
@@ -76,6 +117,9 @@ class SolarImport:
         self.__cursors: Dict[str, Optional[datetime.datetime]] = {
             station.station_id: None for station in stations
         }
+        # A station whose recent temperature archive did not answer keeps its backfill pending, and every
+        # scheduled run retries it instead of reading the now archive over the days it should have filled.
+        self.__backfill_pending: Dict[str, bool] = {station.station_id: False for station in stations}
 
     def seed_cursors(self, last_published: Optional[datetime.datetime]) -> None:
         '''
@@ -96,6 +140,15 @@ class SolarImport:
         :return: the instant, or None if nothing was published for it yet
         '''
         return self.__cursors[station_id]
+
+    def backfill_pending(self, station_id: str) -> bool:
+        '''
+        Whether the recent archive of a station still has to be read before its scheduled runs may go on
+
+        :param station_id: zero padded DWD station id
+        :return: True while the backfill has to be retried
+        '''
+        return self.__backfill_pending[station_id]
 
     def needs_historical(self, station: Station, now: datetime.datetime) -> bool:
         '''
@@ -142,19 +195,19 @@ class SolarImport:
                 if texts is not None:
                     temperature_texts.extend(texts)
             count += self.__publish(station, parse_solar(solar_texts), parse_temperature(temperature_texts))
-        logger.info("Imported " + str(count) + " historical data points of station " + station.station_id)
+        log().info("Imported %s historical data points of station %s", count, station.station_id)
         return count
 
-    def import_recent(self, station: Station) -> int:
+    def import_recent(self, station: Station, now: Optional[datetime.datetime] = None) -> bool:
         '''
         Publishes the observations of the recent archive of a station that are newer than its cursor
 
         :param station: the DWD station
-        :return: number of published data points
+        :param now: current instant, aware UTC; defaults to the wall clock
+        :return: True if the backfill is done, False if a later run has to retry it
         '''
-        count = self.__import(station, (RECENT,))
-        logger.info("Imported " + str(count) + " recent data points of station " + station.station_id)
-        return count
+        complete, _ = self.__backfill(station, now)
+        return complete
 
     def import_latest(self, now: Optional[datetime.datetime] = None) -> int:
         '''
@@ -170,11 +223,18 @@ class SolarImport:
         total = 0
         for station in self.__stations:
             try:
-                count = self.__import(station, self.kinds_for(station, now))
+                if self.__backfill_pending[station.station_id]:
+                    # The backfill decides where the cursor starts, so the now archive of this station has to
+                    # wait for it rather than publish the current day over the gap it left.
+                    complete, count = self.__backfill(station, now)
+                    total += count
+                    if not complete:
+                        continue
+                count = self.__import(station, self.kinds_for(station, now), now)
                 total += count
-                logger.info("Imported " + str(count) + " latest data points of station " + station.station_id)
+                log().info("Imported %s latest data points of station %s", count, station.station_id)
             except Exception as e:
-                logger.error("Could not import station " + station.station_id + ": " + str(e))
+                log().error("Could not import station %s: %s", station.station_id, e)
         return total
 
     def kinds_for(self, station: Station, now: datetime.datetime) -> Tuple[str, ...]:
@@ -192,29 +252,145 @@ class SolarImport:
             return RECENT, NOW
         return (NOW,)
 
-    def __import(self, station: Station, kinds: Tuple[str, ...]) -> int:
-        solar_texts = []
-        temperature_texts = []
+    def __backfill(self, station: Station, now: Optional[datetime.datetime]) -> Tuple[bool, int]:
+        if now is None:
+            now = datetime.datetime.now(datetime.timezone.utc)
+        solar, temperature, recent_solar = self.__read(station, (RECENT,))
+        # Without any temperature the whole backfill would go out bare once MAX_HOLD has passed on its closed
+        # days, and no later run reads them again, so the cursor stays put and a later run retries instead.
+        if self.__with_temperature and not temperature:
+            self.__backfill_pending[station.station_id] = True
+            log().error("The recent air temperature archive of station %s carries no rows, so its backfill and "
+                        "its now archive wait for a later run", station.station_id)
+            self.__log_waiting(station, self.__cursors[station.station_id], solar, {}, [], now)
+            return False, 0
+        count = self.__run(station, solar, temperature, recent_solar, now)
+        self.__backfill_pending[station.station_id] = False
+        log().info("Imported %s recent data points of station %s", count, station.station_id)
+        return True, count
+
+    def __import(self, station: Station, kinds: Tuple[str, ...], now: datetime.datetime) -> int:
+        solar, temperature, recent_solar = self.__read(station, kinds)
+        return self.__run(station, solar, temperature, recent_solar, now)
+
+    def __read(self, station: Station, kinds: Tuple[str, ...]) \
+            -> Tuple[Dict[datetime.datetime, SolarRow], Dict[datetime.datetime, TemperatureRow],
+                     Optional[Dict[datetime.datetime, SolarRow]]]:
+        solar: Dict[datetime.datetime, SolarRow] = {}
+        temperature: Dict[datetime.datetime, TemperatureRow] = {}
+        # What the recent archive contributes decides how far this run may publish; None means it was not read.
+        recent_solar: Optional[Dict[datetime.datetime, SolarRow]] = None
         for kind in kinds:
+            kind_solar: Dict[datetime.datetime, SolarRow] = {}
             texts = fetch_product(SOLAR, kind, station.station_id, self.__fetch)
             if texts is not None:
-                solar_texts.extend(texts)
-            if not self.__with_temperature:
+                kind_solar = parse_solar(texts)
+            if kind == RECENT:
+                recent_solar = kind_solar
+            if self.__with_temperature:
+                texts = fetch_product(TEMPERATURE, kind, station.station_id, self.__fetch)
+                if texts is not None:
+                    temperature.update(parse_temperature(texts))
+            # The kinds are read oldest reaching first, so the now archive wins where the two overlap.
+            solar.update(kind_solar)
+        return solar, temperature, recent_solar
+
+    def __run(self, station: Station, solar: Dict[datetime.datetime, SolarRow],
+              temperature: Dict[datetime.datetime, TemperatureRow],
+              recent_solar: Optional[Dict[datetime.datetime, SolarRow]], now: datetime.datetime) -> int:
+        cursor = self.__cursors[station.station_id]
+        publishable, bare = self.__complete_prefix(cursor, self.__before_the_gap(solar, recent_solar),
+                                                   temperature, now)
+        count = self.__publish(station, publishable, temperature)
+        self.__log_waiting(station, cursor, solar, publishable, bare, now)
+        return count
+
+    def __before_the_gap(self, solar: Dict[datetime.datetime, SolarRow],
+                         recent_solar: Optional[Dict[datetime.datetime, SolarRow]]) \
+            -> Dict[datetime.datetime, SolarRow]:
+        '''
+        Drops the solar instants that sit behind a gap in this run's archives
+
+        Around midnight the now archive rolls over to the new day hours before the recent archive is regenerated,
+        so the tail of the previous day is in no archive and the cursor must not move past it.
+
+        :param solar: Dict of instant to SolarRow as parsed, both kinds merged
+        :param recent_solar: Dict of instant to SolarRow the recent archive contributed, or None if not read
+        :return: the same Dict without the instants above the gap
+        '''
+        covered = covered_until(solar, recent_solar)
+        if covered is None:
+            return {}
+        return {instant: row for instant, row in solar.items() if instant <= covered}
+
+    def __complete_prefix(self, cursor: Optional[datetime.datetime], solar: Dict[datetime.datetime, SolarRow],
+                          temperature: Dict[datetime.datetime, TemperatureRow], now: datetime.datetime) \
+            -> Tuple[Dict[datetime.datetime, SolarRow], List[datetime.datetime]]:
+        '''
+        The longest run of instants above the cursor that this run may publish
+
+        An instant is complete once the temperature of this run carries a row for it, and after MAX_HOLD it
+        counts as complete without one. The first incomplete instant ends the run, because the cursor only moves
+        forward: an instant published now can never be handed its temperature later.
+
+        :param cursor: the newest published instant of the station, or None
+        :param solar: Dict of instant to SolarRow this run may rely on
+        :param temperature: Dict of instant to TemperatureRow as parsed, both kinds merged
+        :param now: current instant, aware UTC
+        :return: the prefix to publish, and the instants in it that go out without a temperature
+        '''
+        prefix: Dict[datetime.datetime, SolarRow] = {}
+        bare: List[datetime.datetime] = []
+        expired = now - MAX_HOLD
+        for instant in sorted(solar):
+            if cursor is not None and instant <= cursor:
                 continue
-            texts = fetch_product(TEMPERATURE, kind, station.station_id, self.__fetch)
-            if texts is not None:
-                temperature_texts.extend(texts)
-        return self.__publish(station, parse_solar(solar_texts), parse_temperature(temperature_texts))
+            # A row carrying DWD's missing marker counts as covered: the field is left out of the message, and
+            # a station whose sensor only delivers the marker must not stall its solar series.
+            if not self.__with_temperature or instant in temperature:
+                prefix[instant] = solar[instant]
+                continue
+            if instant < expired:
+                prefix[instant] = solar[instant]
+                bare.append(instant)
+                continue
+            break
+        return prefix, bare
+
+    def __log_waiting(self, station: Station, cursor: Optional[datetime.datetime],
+                      solar: Collection[datetime.datetime], publishable: Collection[datetime.datetime],
+                      bare: List[datetime.datetime], now: datetime.datetime) -> None:
+        '''One line per run and station, never one per instant: what went out bare, and what is still waiting.'''
+        if bare:
+            log().warning("Published %s instants of station %s without a temperature, the oldest at %s: no "
+                          "archive carried one within %s", len(bare), station.station_id, min(bare), MAX_HOLD)
+        waiting = [instant for instant in solar
+                   if (cursor is None or instant > cursor) and instant not in publishable]
+        if not waiting:
+            return
+        oldest = min(waiting)
+        if oldest < now - MAX_HOLD:
+            # Only the midnight seam or a pending backfill can hold an instant this long; the temperature alone
+            # would have let it go out bare.
+            log().warning("Station %s has %s instants waiting longer than %s, the oldest at %s: this run's "
+                          "archives do not carry them", station.station_id, len(waiting), MAX_HOLD, oldest)
+        else:
+            log().info("Holding back %s instants of station %s for a later run, the oldest at %s",
+                       len(waiting), station.station_id, oldest)
 
     def __publish(self, station: Station, solar: Dict[datetime.datetime, SolarRow],
                   temperature: Dict[datetime.datetime, TemperatureRow]) -> int:
         cursor = self.__cursors[station.station_id]
         count = 0
+        # The logger formats and serialises its line before the level check, which a historical block would pay
+        # per row, so the level is read once here instead.
+        debug = log().isEnabledFor(logging.DEBUG)
         for instant, solar_row, temperature_row in join_temperature(solar, temperature):
             if cursor is not None and instant <= cursor:
                 continue
             value = build_message(station, solar_row, temperature_row, self.__with_temperature)
-            logger.debug(str(instant) + ": " + str(value))
+            if debug:
+                log().debug("%s: %s", instant, value)
             self.__lib.put(instant, value)
             cursor = instant
             self.__cursors[station.station_id] = cursor

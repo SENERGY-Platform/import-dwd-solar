@@ -15,9 +15,20 @@
 import logging
 from typing import Callable, List, Optional, Tuple
 
+from import_lib.import_lib import get_logger
+
 from lib.dwd.archive import STATION_LIST_URL, get_bytes
 
-logger = logging.getLogger(__name__)
+_logger = None
+
+
+def log() -> logging.Logger:
+    # Built on first use: import-lib's logger only carries its static fields after ImportLib() ran init_logging.
+    global _logger
+    if _logger is None:
+        _logger = get_logger(__name__)
+    return _logger
+
 
 # The name column is the only one that may contain spaces. Bundesland and Abgabe
 # are one token each and trail it, so the name is everything between the sixth
@@ -60,7 +71,7 @@ def parse_station_list(raw: bytes) -> List[Station]:
     for line in lines:
         fields = [field for field in line.split() if field != ""]
         if len(fields) < FIRST_NAME_FIELD + TRAILING_FIELDS + 1:
-            logger.error("Station list line has too few fields and will be ignored: " + line)
+            log().error("Station list line has too few fields and will be ignored: %s", line)
             continue
         try:
             stations.append(Station(
@@ -72,7 +83,7 @@ def parse_station_list(raw: bytes) -> List[Station]:
                 height=float(fields[3]),
             ))
         except ValueError as e:
-            logger.error(e)
+            log().error("%s", e)
             raise Exception("Could not parse station list")
     return stations
 

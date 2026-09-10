@@ -35,19 +35,19 @@ if __name__ == '__main__':
 
     stations, missing = select_stations(fetch_station_list(), station_ids)
     for station_id in missing:
-        logger.error("Station " + station_id + " is not in the DWD solar station list and will be skipped")
+        logger.error("Station %s is not in the DWD solar station list and will be skipped", station_id)
     if len(stations) == 0:
         logger.error("None of the configured station ids is in the DWD solar station list")
         sys.exit(1)
-    logger.info("Importing " + str(len(stations)) + " stations: "
-                + ", ".join([station.station_id + " " + station.name for station in stations]))
+    logger.info("Importing %s stations: %s", len(stations),
+                ", ".join([station.station_id + " " + station.name for station in stations]))
 
     last_published, _ = lib.get_last_published_datetime()
     last_published = as_utc(last_published)
     if last_published is None:
         logger.info("Import is starting fresh")
     else:
-        logger.info("Import is continuing previous import at " + str(last_published))
+        logger.info("Import is continuing previous import at %s", last_published)
 
     solar_import = SolarImport(lib, stations, with_temperature)
     solar_import.seed_cursors(last_published)
@@ -57,20 +57,20 @@ if __name__ == '__main__':
     if lib.get_config("HISTORIC", False):
         for station in stations:
             if solar_import.needs_historical(station, now):
-                logger.info("Importing historic data of station " + station.station_id + "...")
+                logger.info("Importing historic data of station %s...", station.station_id)
                 solar_import.import_historical(station)
             else:
-                logger.info("Skipping historic data of station " + station.station_id + " (already done)")
+                logger.info("Skipping historic data of station %s (already done)", station.station_id)
     else:
         logger.info("Skipping historic data (not configured)")
 
     if lib.get_config("RECENT", False):
         for station in stations:
             if solar_import.needs_recent(station, now):
-                logger.info("Importing recent data of station " + station.station_id + "...")
+                logger.info("Importing recent data of station %s...", station.station_id)
                 solar_import.import_recent(station)
             else:
-                logger.info("Skipping recent data of station " + station.station_id + " (already done)")
+                logger.info("Skipping recent data of station %s (already done)", station.station_id)
     else:
         logger.info("Skipping recent data (not configured)")
 

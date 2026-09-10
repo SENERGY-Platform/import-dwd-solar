@@ -14,7 +14,7 @@
 
 from typing import Dict, Optional
 
-from lib.dwd.rows import HOURS_TO_SECONDS, JOULE_PER_CM2_TO_W_PER_M2, SolarRow, TemperatureRow, scaled
+from lib.dwd.rows import HOURS_TO_SECONDS, JOULE_PER_CM2_TO_W_PER_M2, MISSING, SolarRow, TemperatureRow, scaled
 from lib.dwd.stations import Station
 
 UNITS = {
@@ -32,8 +32,8 @@ def build_message(station: Station, solar_row: SolarRow, temperature_row: Option
     '''
     Builds the published value of one instant
 
-    temperature_2m is left out entirely rather than sent as null when the temperature of that instant is unknown,
-    so a consumer can tell "not measured" apart from a measured value.
+    A column DWD marks as missing is left out entirely rather than sent as its marker or as null, so a consumer
+    can tell "not measured" apart from a measured value instead of averaging -999 into its series.
 
     :param station: the DWD station
     :param solar_row: the solar observation
@@ -41,18 +41,20 @@ def build_message(station: Station, solar_row: SolarRow, temperature_row: Option
     :param with_temperature: whether temperature is part of this import
     :return: the value dict
     '''
-    message = {
-        "global_irradiance_wm2": scaled(solar_row.global_, JOULE_PER_CM2_TO_W_PER_M2),
-        "diffuse_irradiance_wm2": scaled(solar_row.diffuse, JOULE_PER_CM2_TO_W_PER_M2),
-        "sunshine_seconds": scaled(solar_row.sunshine, HOURS_TO_SECONDS),
-        "longwave_wm2": scaled(solar_row.longwave, JOULE_PER_CM2_TO_W_PER_M2),
-        "global_irradiance_raw": solar_row.global_,
-    }
-    if with_temperature and temperature_row is not None:
+    message = {}
+    # The marker is compared against the delivered value, not the converted one, so the check stays exact.
+    for name, delivered, factor in (
+        ("global_irradiance_wm2", solar_row.global_, JOULE_PER_CM2_TO_W_PER_M2),
+        ("diffuse_irradiance_wm2", solar_row.diffuse, JOULE_PER_CM2_TO_W_PER_M2),
+        ("sunshine_seconds", solar_row.sunshine, HOURS_TO_SECONDS),
+        ("longwave_wm2", solar_row.longwave, JOULE_PER_CM2_TO_W_PER_M2),
+        ("global_irradiance_raw", solar_row.global_, 1.0),
+    ):
+        if delivered != MISSING:
+            message[name] = scaled(delivered, factor)
+    if with_temperature and temperature_row is not None and temperature_row.temperature_2m != MISSING:
         message["temperature_2m"] = temperature_row.temperature_2m
     message["meta"] = {
-        # See https://www.dwd.de/DE/leistungen/klimadatendeutschland/qualitaetsniveau.html
-        "quality_level": solar_row.quality_level,
         "name": station.name,
         "id": station.station_id,
         "lat": station.lat,
@@ -60,4 +62,8 @@ def build_message(station: Station, solar_row: SolarRow, temperature_row: Option
         "height": station.height,
         "units": dict(UNITS),
     }
+    # See https://www.dwd.de/DE/leistungen/klimadatendeutschland/qualitaetsniveau.html. QN carries the marker
+    # like every other column, and -999 is not a quality level, so it is left out rather than sent as a number.
+    if solar_row.quality_level != MISSING:
+        message["meta"]["quality_level"] = solar_row.quality_level
     return message

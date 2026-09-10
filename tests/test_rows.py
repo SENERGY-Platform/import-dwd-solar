@@ -111,7 +111,7 @@ class TestParseSolar(unittest.TestCase):
             "STATIONS_ID;MESS_DATUM;QN;DS_10;SD_10;LS_10;eor",
             "2932;202609090000;2;0.0;0.000;23.7;eor",
         ])
-        with self.assertLogs("lib.dwd.rows", level=logging.ERROR):
+        with self.assertLogs("import.rows", level=logging.ERROR):
             self.assertEqual({}, parse_solar([text]))
 
     def test_an_unparsable_row_is_skipped_without_dropping_the_file(self):
@@ -120,9 +120,20 @@ class TestParseSolar(unittest.TestCase):
             "2932;nonsense;2;0.0;0.0;0.000;23.7;eor",
             "2932;202609090010;2;0.0;16.7;0.000;23.7;eor",
         ])
-        with self.assertLogs("lib.dwd.rows", level=logging.ERROR):
+        with self.assertLogs("import.rows", level=logging.ERROR):
             rows = parse_solar([text])
         self.assertEqual([utc(2026, 9, 9, 0, 10)], sorted(rows))
+
+    def test_a_short_row_carrying_a_percent_sign_is_logged_without_breaking(self):
+        # The configured logger interpolates its message against its arguments, so a row that looks like a
+        # format string must not reach the message itself.
+        text = "\n".join([
+            "STATIONS_ID;MESS_DATUM;QN;DS_10;GS_10;SD_10;LS_10;eor",
+            "2932;202609090000;2;0.0;100%",
+            "2932;202609090010;2;0.0;16.7;0.000;23.7;eor",
+        ])
+        with self.assertLogs("import.rows", level=logging.ERROR):
+            self.assertEqual([utc(2026, 9, 9, 0, 10)], sorted(parse_solar([text])))
 
     def test_several_files_merge_into_one_series(self):
         other = "\n".join([

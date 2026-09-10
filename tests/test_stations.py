@@ -68,13 +68,20 @@ class TestParseStationList(unittest.TestCase):
 
     def test_a_short_line_is_skipped(self):
         raw = (STATION_LIST + "\n00001 20070402").encode("latin-1")
-        with self.assertLogs("lib.dwd.stations", level=logging.ERROR):
+        with self.assertLogs("import.stations", level=logging.ERROR):
             self.assertEqual(5, len(parse_station_list(raw)))
 
     def test_an_unparsable_number_is_fatal(self):
         broken = STATION_LIST.replace("51.4347", "east-ish").encode("latin-1")
-        with self.assertLogs("lib.dwd.stations", level=logging.ERROR):
+        with self.assertLogs("import.stations", level=logging.ERROR):
             self.assertRaises(Exception, parse_station_list, broken)
+
+    def test_an_unparsable_number_that_looks_like_a_format_string_is_still_reported(self):
+        # The configured logger interpolates its message against its arguments, so the text of the exception,
+        # which quotes the unparsable field, must not reach the message itself.
+        broken = STATION_LIST.replace("51.4347", "  100%").encode("latin-1")
+        with self.assertLogs("import.stations", level=logging.ERROR):
+            self.assertRaisesRegex(Exception, "Could not parse station list", parse_station_list, broken)
 
 
 class TestEncoding(unittest.TestCase):

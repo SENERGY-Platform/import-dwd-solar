@@ -20,8 +20,18 @@ from datetime import date
 from typing import Callable, List, Optional, Tuple
 
 import requests
+from import_lib.import_lib import get_logger
 
-logger = logging.getLogger(__name__)
+_logger = None
+
+
+def log() -> logging.Logger:
+    # Built on first use: import-lib's logger only carries its static fields after ImportLib() ran init_logging.
+    global _logger
+    if _logger is None:
+        _logger = get_logger(__name__)
+    return _logger
+
 
 BASE_URL = "https://opendata.dwd.de/climate_environment/CDC/observations_germany/climate/10_minutes/"
 
@@ -101,7 +111,7 @@ def read_products(raw: bytes) -> List[str]:
                 continue
             texts.append(archive.read(name).decode().replace(" ", ""))
     if not texts:
-        logger.error("Archive carries no product file, only " + str(names))
+        log().error("Archive carries no product file, only %s", names)
     return texts
 
 
@@ -119,7 +129,7 @@ def fetch_product(product: Tuple[str, str], kind: str, station_id: str,
     url = product_url(product, kind, station_id)
     raw = fetch(url)
     if raw is None:
-        logger.error("No " + kind + " archive at " + url + ". Station still active?")
+        log().error("No %s archive at %s. Station still active?", kind, url)
         return None
     return read_products(raw)
 
@@ -141,7 +151,7 @@ def fetch_historical_blocks(product: Tuple[str, str], station_id: str,
     index_url = BASE_URL + directory + "/" + HISTORICAL + "/"
     raw = fetch(index_url)
     if raw is None:
-        logger.error("Could not list " + index_url)
+        log().error("Could not list %s", index_url)
         return []
     index = raw.decode("utf-8", "replace")
     pattern = re.compile(r"10minutenwerte_" + code + "_" + re.escape(station_id) + r"_(\d{8})_(\d{8})_hist\.zip")
@@ -151,7 +161,7 @@ def fetch_historical_blocks(product: Tuple[str, str], station_id: str,
             first = _as_date(date_from)
             last = _as_date(date_to)
         except ValueError as e:
-            logger.error(e)
+            log().error("%s", e)
             continue
         blocks.append((first, last, historical_url(product, station_id, date_from, date_to)))
     return blocks
@@ -167,7 +177,7 @@ def fetch_historical_block(url: str, fetch: Callable[[str], Optional[bytes]] = g
     '''
     raw = fetch(url)
     if raw is None:
-        logger.error("No historical archive at " + url)
+        log().error("No historical archive at %s", url)
         return None
     return read_products(raw)
 

@@ -35,13 +35,30 @@ class TestBuildMessage(unittest.TestCase):
     def test_keeps_the_raw_global_irradiance(self):
         self.assertAlmostEqual(16.7, build_message(STATION, ROW, None, False)["global_irradiance_raw"], places=9)
 
-    def test_a_missing_column_is_published_as_the_marker(self):
+    def test_a_missing_column_is_left_out_of_the_message(self):
+        # The marker is a number to every consumer that averages or interpolates the series, so it is not sent.
         row = ROW._replace(global_=MISSING, sunshine=MISSING)
         message = build_message(STATION, row, None, False)
-        self.assertEqual(MISSING, message["global_irradiance_wm2"])
-        self.assertEqual(MISSING, message["global_irradiance_raw"])
-        self.assertEqual(MISSING, message["sunshine_seconds"])
+        self.assertNotIn("global_irradiance_wm2", message)
+        self.assertNotIn("global_irradiance_raw", message)
+        self.assertNotIn("sunshine_seconds", message)
         self.assertAlmostEqual(205.0, message["diffuse_irradiance_wm2"], places=9)
+        self.assertAlmostEqual(401.6666666666667, message["longwave_wm2"], places=9)
+
+    def test_a_row_of_nothing_but_markers_still_carries_its_metadata(self):
+        row = SolarRow(quality_level=1, diffuse=MISSING, global_=MISSING, sunshine=MISSING, longwave=MISSING)
+        message = build_message(STATION, row, TemperatureRow(temperature_2m=MISSING), True)
+        self.assertEqual(["meta"], list(message))
+        self.assertEqual(1, message["meta"]["quality_level"])
+
+    def test_a_missing_quality_level_is_left_out_of_the_metadata(self):
+        # DWD marks QN with -999 like any other column, and a consumer reading meta.quality_level as a number
+        # would take the marker for a quality level of its own.
+        row = ROW._replace(quality_level=int(MISSING))
+        meta = build_message(STATION, row, None, False)["meta"]
+        self.assertNotIn("quality_level", meta)
+        # The rest of the metadata is unaffected.
+        self.assertEqual("02932", meta["id"])
 
     def test_carries_the_station_metadata(self):
         meta = build_message(STATION, ROW, None, False)["meta"]
@@ -65,9 +82,11 @@ class TestBuildMessage(unittest.TestCase):
         message = build_message(STATION, ROW, TemperatureRow(temperature_2m=22.4), False)
         self.assertNotIn("temperature_2m", message)
 
-    def test_a_missing_temperature_reading_is_published_as_the_marker(self):
+    def test_a_missing_temperature_reading_is_left_out_of_the_message(self):
         message = build_message(STATION, ROW, TemperatureRow(temperature_2m=MISSING), True)
-        self.assertEqual(MISSING, message["temperature_2m"])
+        self.assertNotIn("temperature_2m", message)
+        # The solar columns of the same instant are unaffected by the missing temperature.
+        self.assertAlmostEqual(278.3333333333333, message["global_irradiance_wm2"], places=9)
 
     def test_the_message_is_json_serialisable(self):
         json.loads(json.dumps(build_message(STATION, ROW, TemperatureRow(temperature_2m=22.4), True)))

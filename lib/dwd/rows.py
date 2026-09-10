@@ -17,7 +17,18 @@ import logging
 from collections import namedtuple
 from typing import Dict, Iterable, List, Optional, Tuple
 
-logger = logging.getLogger(__name__)
+from import_lib.import_lib import get_logger
+
+_logger = None
+
+
+def log() -> logging.Logger:
+    # Built on first use: import-lib's logger only carries its static fields after ImportLib() ran init_logging.
+    global _logger
+    if _logger is None:
+        _logger = get_logger(__name__)
+    return _logger
+
 
 # DWD marks a missing numeric value with -999. It is checked per column, because the columns of one row can be
 # missing independently of each other.
@@ -118,7 +129,7 @@ def _parse(text: str, columns: Tuple[str, ...], build, into: Dict) -> None:
     indices = {}
     for column in columns:
         if column not in header:
-            logger.error("Product file does not contain column " + column + " and will be ignored")
+            log().error("Product file does not contain column %s and will be ignored", column)
             return
         indices[column] = header.index(column)
     highest = max(indices.values())
@@ -127,17 +138,17 @@ def _parse(text: str, columns: Tuple[str, ...], build, into: Dict) -> None:
             continue
         fields = line.split(";")
         if len(fields) <= highest:
-            logger.error("Product row has too few fields and will be ignored: " + line)
+            log().error("Product row has too few fields and will be ignored: %s", line)
             continue
         try:
             instant = parse_mess_datum(fields[indices[TIME_COLUMN]])
         except ValueError:
-            logger.error("Could not parse datetime from product row. Format changed? Ignoring row")
+            log().error("Could not parse datetime from product row. Format changed? Ignoring row")
             continue
         try:
             into[instant] = build(fields, indices)
         except ValueError:
-            logger.error("Could not parse values from product row. Format changed? Ignoring row")
+            log().error("Could not parse values from product row. Format changed? Ignoring row")
             continue
 
 
