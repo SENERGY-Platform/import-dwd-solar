@@ -123,3 +123,19 @@ def select_stations(stations: List[Station], station_ids: List[str]) -> Tuple[Li
         else:
             missing.append(station_id)
     return selected, missing
+
+
+def stations_for(stations: List[Station], station_ids: Optional[List[str]]) -> Tuple[List[Station], List[str]]:
+    '''
+    The stations one import covers: the configured ones, or every station of the list when none are configured.
+
+    Covering all of them is what lets a single instance serve consumers that pick their station themselves - by
+    id, or by distance to a coordinate - instead of one instance per station and one export each.
+
+    :param stations: List of all Stations
+    :param station_ids: configured station ids, empty or None for all of them
+    :return: Tuple of the Stations to import and the configured ids that are unknown
+    '''
+    if not station_ids:
+        return list(stations), []
+    return select_stations(stations, station_ids)

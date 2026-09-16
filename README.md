@@ -31,10 +31,14 @@ the same instant.*
 ## Configs
  * STATION_IDS (List of strings): the DWD station ids to import, zero padded as in the
    [station list](https://opendata.dwd.de/climate_environment/CDC/observations_germany/climate/10_minutes/solar/recent/zehn_min_sd_Beschreibung_Stationen.txt),
-   for example ["02932"]. Required; the import refuses to start without at least one id. A map of all DWD stations is
+   for example ["02932"]. **Leave it empty to import every station of the list.** One instance covering all of them
+   is what lets a consumer pick its station out of the export, by id or by distance to a coordinate, instead of one
+   instance and one export per station. A map of all DWD stations is
    available [here](https://www.dwd.de/DE/leistungen/klimadatendeutschland/mnetzkarten/messnetz_solar.pdf?__blob=publicationFile&v=6).
- * HISTORIC (bool): If true, all available historic data will be imported. Default: false
- * RECENT (bool): If true, all recent data (roughly the last 500 days) will be imported. Default: false
+ * HISTORIC (bool): If true, all available historic data will be imported - every block DWD keeps, which is decades
+   per station. Default: false
+ * RECENT (bool): If true, the recent archive will be imported. It reaches about 550 days back, measured against the
+   published archive, so it covers a replay of the last year on its own. Default: false
  * WITH_TEMPERATURE (bool): If true, the air temperature of the same stations is joined onto the solar
    observations. Default: true
 

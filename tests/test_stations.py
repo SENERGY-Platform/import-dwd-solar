@@ -16,7 +16,8 @@ import logging
 import unittest
 
 from lib.dwd.archive import STATION_LIST_URL
-from lib.dwd.stations import STATION_LIST_ENCODING, fetch_station_list, parse_station_list, select_stations
+from lib.dwd.stations import STATION_LIST_ENCODING, fetch_station_list, parse_station_list, \
+    select_stations, stations_for
 
 # Verbatim shape of zehn_min_sd_Beschreibung_Stationen.txt, including the trailing padding and the multi word
 # station names that the column layout allows.
@@ -132,6 +133,31 @@ class TestSelectStations(unittest.TestCase):
         selected, missing = select_stations(self.stations, [" 02932 "])
         self.assertEqual(["02932"], [station.station_id for station in selected])
         self.assertEqual([], missing)
+
+
+class TestStationsFor(unittest.TestCase):
+    def setUp(self):
+        self.stations = parse_station_list(STATION_LIST_BYTES)
+
+    def test_nothing_configured_covers_every_station(self):
+        # one instance for all of them is the point: a consumer picks its station out of the export, by id or
+        # by distance, instead of an instance and an export existing per station
+        for station_ids in (None, []):
+            selected, missing = stations_for(self.stations, station_ids)
+            self.assertEqual([station.station_id for station in self.stations],
+                             [station.station_id for station in selected])
+            self.assertEqual([], missing)
+
+    def test_configured_ids_still_select(self):
+        selected, missing = stations_for(self.stations, ["02932", "99999"])
+        self.assertEqual(["02932"], [station.station_id for station in selected])
+        self.assertEqual(["99999"], missing)
+
+    def test_the_list_it_returns_is_its_own(self):
+        # the caller keeps the result for the life of the import and the station list is read again on a reload
+        selected, _ = stations_for(self.stations, None)
+        selected.clear()
+        self.assertEqual(5, len(self.stations))
 
 
 if __name__ == "__main__":

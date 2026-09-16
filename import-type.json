@@ -9,7 +9,7 @@
   "configs": [
     {
       "name": "STATION_IDS",
-      "description": "DWD station ids to import, zero padded as in the DWD solar station list, for example [\"02932\"]. At least one id is required.",
+      "description": "DWD station ids to import, zero padded as in the DWD solar station list, for example [\"02932\"]. Leave empty to import every station of the list, which is what lets one instance serve consumers that pick their station by id or by distance to a coordinate.",
       "type": "https://schema.org/ItemList",
       "default_value": []
     },
@@ -21,7 +21,7 @@
     },
     {
       "name": "RECENT",
-      "description": "Import the recent archive, roughly the last 500 days, once at startup.",
+      "description": "Import the recent archive once at startup. It reaches about 550 days back, measured against the published archive, and is what covers a replay of the last year without the historic blocks.",
       "type": "https://schema.org/Boolean",
       "default_value": false
     },
@@ -117,11 +117,13 @@
               {
                 "name": "lat",
                 "type": "https://schema.org/Float",
+                "characteristic_id": "urn:infai:ses:characteristic:63bb46ea-64f1-4a60-aabb-67b9febdb588",
                 "sub_content_variables": []
               },
               {
                 "name": "long",
                 "type": "https://schema.org/Float",
+                "characteristic_id": "urn:infai:ses:characteristic:d8a73a4d-8745-40b9-87e5-50c5d31f745a",
                 "sub_content_variables": []
               },
               {

@@ -20,27 +20,33 @@ import schedule
 from import_lib.import_lib import ImportLib, get_logger
 
 from lib.dwd.importer import SolarImport, as_utc
-from lib.dwd.stations import fetch_station_list, select_stations
+from lib.dwd.stations import fetch_station_list, stations_for
 
 if __name__ == '__main__':
     lib = ImportLib("github.com/SENERGY-Platform/import-dwd-solar")
     logger = get_logger(__name__)
 
     station_ids = lib.get_config("STATION_IDS", None)
-    if not isinstance(station_ids, list) or len(station_ids) == 0:
-        logger.error("Config STATION_IDS must be a non empty list of DWD station ids, for example [\"02932\"]")
+    if station_ids is not None and not isinstance(station_ids, list):
+        # a bare string here is a typo, and reading it as "unset" would quietly
+        # import every station instead of the one that was meant
+        logger.error("Config STATION_IDS must be a list of DWD station ids, for example [\"02932\"], or unset for all")
         sys.exit(1)
 
     with_temperature = lib.get_config("WITH_TEMPERATURE", True)
 
-    stations, missing = select_stations(fetch_station_list(), station_ids)
+    stations, missing = stations_for(fetch_station_list(), station_ids)
     for station_id in missing:
         logger.error("Station %s is not in the DWD solar station list and will be skipped", station_id)
     if len(stations) == 0:
         logger.error("None of the configured station ids is in the DWD solar station list")
         sys.exit(1)
-    logger.info("Importing %s stations: %s", len(stations),
-                ", ".join([station.station_id + " " + station.name for station in stations]))
+    if station_ids:
+        logger.info("Importing %s stations: %s", len(stations),
+                    ", ".join([station.station_id + " " + station.name for station in stations]))
+    else:
+        # naming all of them would be a log line of several thousand characters
+        logger.info("No STATION_IDS configured, importing all %s stations of the DWD solar list", len(stations))
 
     last_published, _ = lib.get_last_published_datetime()
     last_published = as_utc(last_published)
