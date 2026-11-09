@@ -14,7 +14,7 @@
 
 import datetime
 import logging
-from typing import Callable, Collection, Dict, List, Optional, Tuple
+from typing import Callable, Collection, Dict, List, Optional, Set, Tuple
 
 from import_lib.import_lib import get_logger
 
@@ -120,6 +120,10 @@ class SolarImport:
         # A station whose recent temperature archive did not answer keeps its backfill pending, and every
         # scheduled run retries it instead of reading the now archive over the days it should have filled.
         self.__backfill_pending: Dict[str, bool] = {station.station_id: False for station in stations}
+        # Per run of import_latest: the stations whose solar archives were read, and those among them that
+        # answered. One station's missing archive is a warning, none answering at all is an error.
+        self.__run_read: Set[str] = set()
+        self.__run_answered: Set[str] = set()
 
     def seed_cursors(self, last_published: Optional[datetime.datetime]) -> None:
         '''
@@ -221,6 +225,8 @@ class SolarImport:
         if now is None:
             now = datetime.datetime.now(datetime.timezone.utc)
         total = 0
+        self.__run_read = set()
+        self.__run_answered = set()
         for station in self.__stations:
             try:
                 if self.__backfill_pending[station.station_id]:
@@ -235,6 +241,9 @@ class SolarImport:
                 log().info("Imported %s latest data points of station %s", count, station.station_id)
             except Exception as e:
                 log().error("Could not import station %s: %s", station.station_id, e)
+        if self.__stations and len(self.__run_read) == len(self.__stations) and not self.__run_answered:
+            log().error("No DWD solar archive answered for any of the %s stations in this run",
+                        len(self.__stations))
         return total
 
     def kinds_for(self, station: Station, now: datetime.datetime) -> Tuple[str, ...]:
@@ -283,7 +292,9 @@ class SolarImport:
         for kind in kinds:
             kind_solar: Dict[datetime.datetime, SolarRow] = {}
             texts = fetch_product(SOLAR, kind, station.station_id, self.__fetch)
+            self.__run_read.add(station.station_id)
             if texts is not None:
+                self.__run_answered.add(station.station_id)
                 kind_solar = parse_solar(texts)
             if kind == RECENT:
                 recent_solar = kind_solar

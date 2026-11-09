@@ -20,7 +20,7 @@ import schedule
 from import_lib.import_lib import ImportLib, get_logger
 
 from lib.dwd.importer import SolarImport, as_utc
-from lib.dwd.stations import fetch_station_list, stations_for
+from lib.dwd.stations import CLOSED_AFTER, fetch_station_list, is_closed, stations_for
 
 if __name__ == '__main__':
     lib = ImportLib("github.com/SENERGY-Platform/import-dwd-solar")
@@ -35,7 +35,8 @@ if __name__ == '__main__':
 
     with_temperature = lib.get_config("WITH_TEMPERATURE", True)
 
-    stations, missing = stations_for(fetch_station_list(), station_ids)
+    all_stations = fetch_station_list()
+    stations, missing = stations_for(all_stations, station_ids)
     for station_id in missing:
         logger.error("Station %s is not in the DWD solar station list and will be skipped", station_id)
     if len(stations) == 0:
@@ -44,9 +45,16 @@ if __name__ == '__main__':
     if station_ids:
         logger.info("Importing %s stations: %s", len(stations),
                     ", ".join([station.station_id + " " + station.name for station in stations]))
+        today = datetime.datetime.now(datetime.timezone.utc).date()
+        for station in stations:
+            if is_closed(station, today):
+                logger.warning("Station %s %s ended on %s in the DWD solar list, its archives may be gone",
+                               station.station_id, station.name, station.until)
     else:
         # naming all of them would be a log line of several thousand characters
         logger.info("No STATION_IDS configured, importing all %s stations of the DWD solar list", len(stations))
+        logger.info("Left out %s closed stations whose end date in the list is more than %s days back",
+                    len(all_stations) - len(stations), CLOSED_AFTER.days)
 
     last_published, _ = lib.get_last_published_datetime()
     last_published = as_utc(last_published)

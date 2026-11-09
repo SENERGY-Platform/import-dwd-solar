@@ -129,7 +129,7 @@ def fetch_product(product: Tuple[str, str], kind: str, station_id: str,
     url = product_url(product, kind, station_id)
     raw = fetch(url)
     if raw is None:
-        log().error("No %s archive at %s. Station still active?", kind, url)
+        log().warning("No %s archive at %s. Station still active?", kind, url)
         return None
     return read_products(raw)
 

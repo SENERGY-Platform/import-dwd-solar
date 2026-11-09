@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import datetime
 import logging
 from typing import Callable, List, Optional, Tuple
 
@@ -39,19 +40,25 @@ TRAILING_FIELDS = 2
 # The station list carries German names; DWD serves it as ISO-8859-1.
 STATION_LIST_ENCODING = "latin-1"
 
+# DWD keeps closed stations in the list for good, and an active station carries the current date as its end date.
+# The margin keeps a station whose list entry lags a few days behind its archives.
+CLOSED_AFTER = datetime.timedelta(days=7)
+
 
 class Station:
     '''
     Class to store DWD station metadata
     '''
-    __slots__ = ('station_id', 'name', 'lat', 'long', 'height')
+    __slots__ = ('station_id', 'name', 'lat', 'long', 'height', 'until')
 
-    def __init__(self, station_id: str, name: str, lat: float, long: float, height: float):
+    def __init__(self, station_id: str, name: str, lat: float, long: float, height: float,
+                 until: Optional[datetime.date] = None):
         self.station_id = station_id
         self.name = name
         self.lat = lat
         self.long = long
         self.height = height
+        self.until = until
 
     def __repr__(self) -> str:
         return "Station(" + self.station_id + ", " + self.name + ")"
@@ -81,6 +88,7 @@ def parse_station_list(raw: bytes) -> List[Station]:
                 lat=float(fields[4]),
                 long=float(fields[5]),
                 height=float(fields[3]),
+                until=datetime.datetime.strptime(fields[2], "%Y%m%d").date(),
             ))
         except ValueError as e:
             log().error("%s", e)
@@ -99,6 +107,17 @@ def fetch_station_list(fetch: Callable[[str], Optional[bytes]] = get_bytes) -> L
     if raw is None:
         raise Exception("Could not get station list. Network OK?")
     return parse_station_list(raw)
+
+
+def is_closed(station: Station, today: datetime.date) -> bool:
+    '''
+    Whether DWD's list gives a station an end date that lies more than CLOSED_AFTER back
+
+    :param station: the DWD station
+    :param today: the current date
+    :return: True if the station was shut down
+    '''
+    return station.until is not None and station.until < today - CLOSED_AFTER
 
 
 def select_stations(stations: List[Station], station_ids: List[str]) -> Tuple[List[Station], List[str]]:
@@ -125,17 +144,22 @@ def select_stations(stations: List[Station], station_ids: List[str]) -> Tuple[Li
     return selected, missing
 
 
-def stations_for(stations: List[Station], station_ids: Optional[List[str]]) -> Tuple[List[Station], List[str]]:
+def stations_for(stations: List[Station], station_ids: Optional[List[str]],
+                 today: Optional[datetime.date] = None) -> Tuple[List[Station], List[str]]:
     '''
-    The stations one import covers: the configured ones, or every station of the list when none are configured.
+    The stations one import covers: the configured ones, or every station of the list that is not closed when
+    none are configured.
 
     Covering all of them is what lets a single instance serve consumers that pick their station themselves - by
     id, or by distance to a coordinate - instead of one instance per station and one export each.
 
     :param stations: List of all Stations
     :param station_ids: configured station ids, empty or None for all of them
+    :param today: the current date for the closed check; defaults to the current UTC date
     :return: Tuple of the Stations to import and the configured ids that are unknown
     '''
     if not station_ids:
-        return list(stations), []
+        if today is None:
+            today = datetime.datetime.now(datetime.timezone.utc).date()
+        return [station for station in stations if not is_closed(station, today)], []
     return select_stations(stations, station_ids)

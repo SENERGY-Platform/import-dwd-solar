@@ -341,10 +341,34 @@ class TestEndToEnd(unittest.TestCase):
         lib = FakeLib()
         solar_import = make_import(lib, [OTHER_STATION, STATION])
         solar_import.seed_cursors(None)
-        with self.assertLogs("import.archive", level=logging.ERROR):
+        with self.assertLogs("import.archive", level=logging.WARNING) as logs:
             self.assertEqual(4, solar_import.import_latest(utc(2026, 9, 9, 12, 0)))
+        self.assertEqual(["WARNING"], sorted({record.levelname for record in logs.records}))
         self.assertEqual(4, len(lib.puts))
         self.assertIsNone(solar_import.cursor("00427"))
+
+    def test_one_station_without_archives_is_no_error_of_the_run(self):
+        solar_import = make_import(FakeLib(), [OTHER_STATION, STATION])
+        solar_import.seed_cursors(None)
+        with self.assertNoLogs("import.importer", level=logging.ERROR):
+            solar_import.import_latest(utc(2026, 9, 9, 12, 0))
+
+    def test_no_station_with_archives_is_one_error_of_the_run(self):
+        solar_import = make_import(FakeLib(), [OTHER_STATION, Station("00044", "Großenkneten", 52.9, 8.2, 44.0)])
+        solar_import.seed_cursors(None)
+        with self.assertLogs("import.importer", level=logging.ERROR) as logs:
+            solar_import.import_latest(utc(2026, 9, 9, 12, 0))
+        self.assertEqual(1, len(logs.records))
+        self.assertIn("any of the 2 stations", logs.records[0].getMessage())
+
+    def test_the_all_missing_check_starts_over_every_run(self):
+        online = [True]
+        solar_import = SolarImport(FakeLib(), [STATION], True, lambda url: stub_fetch(url) if online[0] else None)
+        solar_import.seed_cursors(None)
+        solar_import.import_latest(utc(2026, 9, 9, 12, 0))
+        online[0] = False
+        with self.assertLogs("import.importer", level=logging.ERROR):
+            solar_import.import_latest(utc(2026, 9, 9, 12, 30))
 
     def test_a_raising_fetch_does_not_stop_the_others(self):
         lib = FakeLib()
@@ -502,11 +526,11 @@ class TestHoldBackUntilTemperature(unittest.TestCase):
         lib = FakeLib()
         solar_import = SolarImport(lib, [STATION], True, TailFetch(SOLAR_TAIL_ROWS, None))
         solar_import.seed_cursors(None)
-        with self.assertLogs("import.archive", level=logging.ERROR) as fetch_errors:
+        with self.assertLogs("import.archive", level=logging.WARNING) as fetch_warnings:
             with self.assertLogs("import.importer", level=logging.INFO) as captured:
                 self.assertEqual(0, solar_import.import_latest(utc(2026, 9, 9, 0, 40)))
         # One line per run on each side: the fetch reports the missing archive, the importer the held back tail.
-        self.assertEqual(1, len(fetch_errors.records))
+        self.assertEqual(1, len(fetch_warnings.records))
         self.assertEqual([], lib.puts)
         self.assertIsNone(solar_import.cursor("02932"))
         holds = [line for line in captured.output if "Holding back" in line]
@@ -518,7 +542,7 @@ class TestHoldBackUntilTemperature(unittest.TestCase):
         lib = FakeLib()
         solar_import = SolarImport(lib, [STATION], True, TailFetch(SOLAR_TAIL_ROWS, None))
         solar_import.seed_cursors(None)
-        with self.assertLogs("import.archive", level=logging.ERROR):
+        with self.assertLogs("import.archive", level=logging.WARNING):
             with self.assertLogs("import.importer", level=logging.WARNING) as captured:
                 self.assertEqual(4, solar_import.import_latest(utc(2026, 9, 9, 0, 30) + MAX_HOLD
                                                                + datetime.timedelta(minutes=1)))
@@ -739,10 +763,10 @@ class TestMidnightSeam(unittest.TestCase):
         })
         solar_import = SolarImport(lib, [STATION], True, feed)
         solar_import.seed_cursors(utc(2026, 9, 9, 23, 40))
-        with self.assertLogs("import.archive", level=logging.ERROR) as fetch_errors:
+        with self.assertLogs("import.archive", level=logging.WARNING) as fetch_warnings:
             with self.assertLogs("import.importer", level=logging.INFO):
                 self.assertEqual(0, solar_import.import_latest(utc(2026, 9, 10, 1, 5)))
-        self.assertEqual(2, len(fetch_errors.records))
+        self.assertEqual(2, len(fetch_warnings.records))
         self.assertEqual([], lib.puts)
         self.assertEqual(utc(2026, 9, 9, 23, 40), solar_import.cursor("02932"))
 
@@ -814,7 +838,7 @@ class TestMidnightSeam(unittest.TestCase):
         })
         solar_import = SolarImport(lib, [STATION], True, feed)
         solar_import.seed_cursors(utc(2026, 9, 9, 23, 40))
-        with self.assertLogs("import.archive", level=logging.ERROR):
+        with self.assertLogs("import.archive", level=logging.WARNING):
             with self.assertLogs("import.importer", level=logging.WARNING) as captured:
                 self.assertEqual(0, solar_import.import_latest(utc(2026, 9, 10, 3, 0)))
         self.assertEqual([], lib.puts)
@@ -883,7 +907,7 @@ class TestRecentBackfill(unittest.TestCase):
         del feed.rows[TEMPERATURE_RECENT_URL]
         solar_import = SolarImport(lib, [STATION], True, feed)
         solar_import.seed_cursors(None)
-        with self.assertLogs("import.archive", level=logging.ERROR):
+        with self.assertLogs("import.archive", level=logging.WARNING):
             with self.assertLogs("import.importer", level=logging.ERROR):
                 self.assertFalse(solar_import.import_recent(STATION, utc(2026, 9, 10, 8, 0)))
         self.assertEqual([], lib.puts)

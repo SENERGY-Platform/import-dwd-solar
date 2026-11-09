@@ -35,6 +35,8 @@ the same instant.*
    is what lets a consumer pick its station out of the export, by id or by distance to a coordinate, instead of one
    instance and one export per station. A map of all DWD stations is
    available [here](https://www.dwd.de/DE/leistungen/klimadatendeutschland/mnetzkarten/messnetz_solar.pdf?__blob=publicationFile&v=6).
+   With STATION_IDS empty, stations whose end date in DWD's list is more than 7 days back are left out. A single
+   station's missing archive is a warning; it is an error only when no station's archive answers.
  * HISTORIC (bool): If true, all available historic data will be imported - every block DWD keeps, which is decades
    per station. Default: false
  * RECENT (bool): If true, the recent archive will be imported. It reaches about 550 days back, measured against the

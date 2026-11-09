@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import datetime
 import logging
 import unittest
 
 from lib.dwd.archive import STATION_LIST_URL
-from lib.dwd.stations import STATION_LIST_ENCODING, fetch_station_list, parse_station_list, \
-    select_stations, stations_for
+from lib.dwd.stations import CLOSED_AFTER, STATION_LIST_ENCODING, Station, fetch_station_list, is_closed, \
+    parse_station_list, select_stations, stations_for
 
 # Verbatim shape of zehn_min_sd_Beschreibung_Stationen.txt, including the trailing padding and the multi word
 # station names that the column layout allows.
@@ -66,6 +67,16 @@ class TestParseStationList(unittest.TestCase):
         self.assertAlmostEqual(51.4347, station.lat, places=6)
         self.assertAlmostEqual(12.2396, station.long, places=6)
         self.assertAlmostEqual(131.0, station.height, places=6)
+
+    def test_reads_the_end_date(self):
+        stations = {station.station_id: station for station in parse_station_list(STATION_LIST_BYTES)}
+        self.assertEqual(datetime.date(2025, 4, 7), stations["00427"].until)
+        self.assertEqual(datetime.date(2026, 9, 9), stations["02932"].until)
+
+    def test_an_unparsable_end_date_is_fatal(self):
+        broken = STATION_LIST.replace("20250407", "2025-04").encode("latin-1")
+        with self.assertLogs("import.stations", level=logging.ERROR):
+            self.assertRaisesRegex(Exception, "Could not parse station list", parse_station_list, broken)
 
     def test_a_short_line_is_skipped(self):
         raw = (STATION_LIST + "\n00001 20070402").encode("latin-1")
@@ -135,6 +146,25 @@ class TestSelectStations(unittest.TestCase):
         self.assertEqual([], missing)
 
 
+TODAY = datetime.date(2026, 3, 10)
+
+
+class TestIsClosed(unittest.TestCase):
+    def station(self, until):
+        return Station("00001", "Test", 50.0, 10.0, 100.0, until)
+
+    def test_the_boundary_is_the_closing_margin(self):
+        boundary = TODAY - CLOSED_AFTER
+        self.assertFalse(is_closed(self.station(boundary), TODAY))
+        self.assertTrue(is_closed(self.station(boundary - datetime.timedelta(days=1)), TODAY))
+
+    def test_an_active_station_is_open(self):
+        self.assertFalse(is_closed(self.station(TODAY), TODAY))
+
+    def test_a_station_without_end_date_is_open(self):
+        self.assertFalse(is_closed(Station("00001", "Test", 50.0, 10.0, 100.0), TODAY))
+
+
 class TestStationsFor(unittest.TestCase):
     def setUp(self):
         self.stations = parse_station_list(STATION_LIST_BYTES)
@@ -143,10 +173,20 @@ class TestStationsFor(unittest.TestCase):
         # one instance for all of them is the point: a consumer picks its station out of the export, by id or
         # by distance, instead of an instance and an export existing per station
         for station_ids in (None, []):
-            selected, missing = stations_for(self.stations, station_ids)
-            self.assertEqual([station.station_id for station in self.stations],
+            selected, missing = stations_for(self.stations, station_ids, TODAY)
+            self.assertEqual([station.station_id for station in self.stations if station.station_id != "00427"],
                              [station.station_id for station in selected])
             self.assertEqual([], missing)
+
+    def test_nothing_configured_drops_a_closed_station_and_keeps_an_open_one(self):
+        selected, _ = stations_for(self.stations, None, TODAY)
+        ids = [station.station_id for station in selected]
+        self.assertNotIn("00427", ids)
+        self.assertIn("02932", ids)
+
+    def test_a_configured_closed_station_is_kept(self):
+        selected, _ = stations_for(self.stations, ["00427"], TODAY)
+        self.assertEqual(["00427"], [station.station_id for station in selected])
 
     def test_configured_ids_still_select(self):
         selected, missing = stations_for(self.stations, ["02932", "99999"])
@@ -155,7 +195,7 @@ class TestStationsFor(unittest.TestCase):
 
     def test_the_list_it_returns_is_its_own(self):
         # the caller keeps the result for the life of the import and the station list is read again on a reload
-        selected, _ = stations_for(self.stations, None)
+        selected, _ = stations_for(self.stations, None, TODAY)
         selected.clear()
         self.assertEqual(5, len(self.stations))
 
